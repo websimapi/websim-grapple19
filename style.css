@@ -101,10 +101,10 @@ body {
     background: #0088ff;
     color: white;
     border: none;
-    width: min(120px, 25vmin);
-    height: min(120px, 25vmin);
+    width: min(80px, 15vmin);
+    height: min(80px, 15vmin);
     border-radius: 50%;
-    font-size: min(60px, 12vmin);
+    font-size: min(40px, 8vmin);
     display: flex;
     justify-content: center;
     align-items: center;

@@ -437,7 +437,7 @@ export class Game {
     }
 
     async ensureRendererAssets() {
-        const ASSET_VERSION = 'v1';
+        const ASSET_VERSION = 'v1_bundled'; 
         const COLLECTION_NAME = 'renderer_assets';
         
         try {
@@ -445,10 +445,9 @@ export class Game {
             const creator = await window.websim.getCreator();
             const records = await this.room.collection(COLLECTION_NAME).filter({ 
                 version: ASSET_VERSION,
-                created_by_username: creator.username // Filter by creator logic if needed, or assume first is valid
+                created_by_username: creator.username 
             }).getList();
 
-            // Filter for the specific record created by the owner
             const ownerRecord = records.find(r => r.username === creator.username);
 
             if (ownerRecord) {
@@ -459,68 +458,101 @@ export class Game {
                 };
             }
 
-            // If we are here, assets don't exist in creator's cache.
-            // If we are the creator, we create them.
-            const currentUser = await window.websim.getCurrentUser();
-            if (currentUser.id === creator.id) {
-                console.log("Creating Renderer Assets...");
-                
-                // 1. Fetch source code
-                const [cssRes, jsRes] = await Promise.all([
-                    fetch('./style.css'),
-                    fetch('./renderer.js')
-                ]);
-                
-                const cssText = await cssRes.text();
-                const jsText = await jsRes.text();
-                const htmlText = '<div id="game-container"></div>'; // Simple container
+            console.log("Generating Renderer Assets Bundle...");
 
-                // 2. Upload Files
-                const uploads = await Promise.all([
-                    websim.upload(new File([new Blob([htmlText], {type: 'text/html'})], "renderer.html")),
-                    websim.upload(new File([new Blob([cssText], {type: 'text/css'})], "renderer.css")),
-                    websim.upload(new File([new Blob([jsText], {type: 'application/javascript'})], "renderer.js"))
-                ]);
+            // 1. Bundle JS
+            const fileOrder = [
+                'utils.js', 
+                'track_factory.js',
+                'track_generator.js',
+                'track.js',
+                'car_mesh.js',
+                'car.js',
+                'input_manager.js',
+                'effects.js',
+                'audio_manager.js',
+                'camera_manager.js',
+                'replay.js',
+                'renderer.js'
+            ];
 
-                // 3. Save to Collection
-                await this.room.collection(COLLECTION_NAME).create({
-                    version: ASSET_VERSION,
-                    html_url: uploads[0],
-                    css_url: uploads[1],
-                    js_url: uploads[2]
+            let bundledJs = `
+import * as THREE from 'https://esm.sh/three@0.160.0';
+import { EffectComposer } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+// --- BUNDLED GAME LOGIC ---
+`;
+
+            for (const file of fileOrder) {
+                const res = await fetch('./' + file);
+                let text = await res.text();
+                
+                // Patch asset URLs to be absolute so they load on remote renderers
+                text = text.replace(/'\.\/([^']+)'/g, (match, path) => {
+                    if (path.match(/\.(png|mp3|jpg|jpeg|glb)$/i)) {
+                        return `'${new URL(path, window.location.href).href}'`;
+                    }
+                    return match;
                 });
 
-                return {
-                    html: uploads[0],
-                    css: uploads[1],
-                    js: uploads[2]
-                };
-            } else {
-                // If not creator, we probably shouldn't create the "official" record, 
-                // but we need something to work. 
-                // We can create a temporary set or just use our own record.
-                // For now, let's just create a record owned by us so we can proceed, 
-                // but ideally the owner should visit the page once to seed this.
-                console.warn("Renderer assets missing from creator. Creating fallback.");
+                // Remove Imports
+                text = text.replace(/import .* from .*/g, '');
+                // Remove Exports
+                text = text.replace(/export class/g, 'class');
+                text = text.replace(/export function/g, 'function');
                 
-                // Reuse logic (duplicated for safety in fallback)
-                const [cssRes, jsRes] = await Promise.all([fetch('./style.css'), fetch('./renderer.js')]);
-                const cssText = await cssRes.text();
-                const jsText = await jsRes.text();
-                const htmlText = '<div id="game-container"></div>';
-
-                const uploads = await Promise.all([
-                    websim.upload(new File([new Blob([htmlText], {type: 'text/html'})], "renderer.html")),
-                    websim.upload(new File([new Blob([cssText], {type: 'text/css'})], "renderer.css")),
-                    websim.upload(new File([new Blob([jsText], {type: 'application/javascript'})], "renderer.js"))
-                ]);
-                
-                return { html: uploads[0], css: uploads[1], js: uploads[2] };
+                bundledJs += `\n// --- ${file} ---\n${text}\n`;
             }
+
+            // 2. Fetch CSS
+            const cssRes = await fetch('./style.css');
+            const cssText = await cssRes.text();
+
+            // 3. Create HTML
+            const htmlText = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grapple Renderer</title>
+</head>
+<body>
+    <div id="game-container"></div>
+</body>
+</html>`;
+
+            // 4. Upload
+            const uploads = await Promise.all([
+                websim.upload(new File([new Blob([htmlText], {type: 'text/html'})], "renderer.html")),
+                websim.upload(new File([new Blob([cssText], {type: 'text/css'})], "renderer.css")),
+                websim.upload(new File([new Blob([bundledJs], {type: 'application/javascript'})], "renderer.js"))
+            ]);
+
+            const result = {
+                html: uploads[0],
+                css: uploads[1],
+                js: uploads[2]
+            };
+
+            // 5. Save to DB if Creator
+            const currentUser = await window.websim.getCurrentUser();
+            if (currentUser.id === creator.id) {
+                await this.room.collection(COLLECTION_NAME).create({
+                    version: ASSET_VERSION,
+                    html_url: result.html,
+                    css_url: result.css,
+                    js_url: result.js
+                });
+                console.log("Assets cached to DB");
+            }
+
+            return result;
 
         } catch (e) {
             console.error("Failed to ensure renderer assets:", e);
-            // Fallback URLs (won't work for upload, but prevents crash)
             return { html: "", css: "", js: "" };
         }
     }

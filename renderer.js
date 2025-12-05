@@ -20,25 +20,8 @@ window.ReplayRenderer = {
         this.container.style.height = '100%';
         this.root.appendChild(this.container);
 
-        // Dynamic Imports of Game Logic
-        // We load them from the provided baseUrl to ensure we get the correct version of the game code
+        // Game Logic Classes are expected to be available in the shared scope (bundled)
         try {
-            const [
-                { Car },
-                { TrackManager },
-                { ReplaySystem },
-                { SpaceEnvironment },
-                { AudioManager },
-                { CameraManager }
-            ] = await Promise.all([
-                import(this.baseUrl + 'car.js'),
-                import(this.baseUrl + 'track.js'),
-                import(this.baseUrl + 'replay.js'),
-                import(this.baseUrl + 'effects.js'),
-                import(this.baseUrl + 'audio_manager.js'),
-                import(this.baseUrl + 'camera_manager.js')
-            ]);
-
             // Setup THREE Scene
             this.scene = new THREE.Scene();
             this.scene.fog = new THREE.FogExp2(0x050505, 0.002);
